@@ -403,3 +403,244 @@ Now, you can test the application by using Postman or any HTTP client to send re
 5. **Service Container**: Bind interfaces to concrete implementations (EloquentTaskRepository).
 
 This structure ensures that your core business logic (task creation, completion) is decoupled from infrastructure concerns like the database and frameworks, making it easier to test and maintain. You can swap out the database, change business logic, or add new features without affecting the core of the application.
+
+
+Absolutely! You're right that hardcoding authorization rules across the system can lead to problems when requirements change. A great way to manage this dynamically and in a maintainable way is by using **design patterns** that decouple the logic, ensuring that authorization rules can be easily added or modified without affecting the core logic of your application.
+
+One of the best design patterns for this scenario is the **Strategy Pattern**, which allows you to define a family of authorization algorithms, encapsulate them, and make them interchangeable. This can be combined with **Open/Closed Principle** (OCP) from SOLID, which suggests that your code should be open for extension but closed for modification.
+
+### Goal:
+- **Avoid hardcoding authorization rules** throughout the application.
+- **Easily extend** or modify the authorization rules when needed.
+- **Follow SOLID principles** to keep the codebase maintainable and flexible.
+
+### Solution: Implementing Authorization Rules using Strategy Pattern
+
+Here’s how we can apply the **Strategy Pattern** for authorization in the context of Clean Architecture:
+
+---
+
+### Step 1: Define the Authorization Strategy Interface
+
+We first define a common interface that all authorization strategies will implement. This interface will have a method that checks if the user is authorized to perform a specific action.
+
+#### **AuthorizationStrategy.php** (Core/Authorization/AuthorizationStrategy.php)
+
+```php
+<?php
+
+namespace App\Core\Authorization;
+
+interface AuthorizationStrategy
+{
+    public function authorize($user, $resource): bool;
+}
+```
+
+This will be the interface for all concrete authorization strategies (e.g., role-based, permission-based, etc.).
+
+---
+
+### Step 2: Create Concrete Authorization Strategies
+
+Now we can create different authorization strategies. For example, one strategy could check if the user has the `admin` role, and another could check for specific permissions.
+
+#### **RoleBasedAuthorization.php** (Core/Authorization/RoleBasedAuthorization.php)
+
+```php
+<?php
+
+namespace App\Core\Authorization;
+
+class RoleBasedAuthorization implements AuthorizationStrategy
+{
+    protected $requiredRole;
+
+    public function __construct($requiredRole)
+    {
+        $this->requiredRole = $requiredRole;
+    }
+
+    public function authorize($user, $resource): bool
+    {
+        return in_array($this->requiredRole, $user->roles);
+    }
+}
+```
+
+#### **PermissionBasedAuthorization.php** (Core/Authorization/PermissionBasedAuthorization.php)
+
+```php
+<?php
+
+namespace App\Core\Authorization;
+
+class PermissionBasedAuthorization implements AuthorizationStrategy
+{
+    protected $requiredPermission;
+
+    public function __construct($requiredPermission)
+    {
+        $this->requiredPermission = $requiredPermission;
+    }
+
+    public function authorize($user, $resource): bool
+    {
+        return in_array($this->requiredPermission, $user->permissions);
+    }
+}
+```
+
+You can continue adding other strategies depending on your needs (e.g., time-based authorization, attribute-based authorization, etc.).
+
+---
+
+### Step 3: Implement the Authorization Context
+
+Now, we create an **Authorization Context** that will use one of the authorization strategies to check if the user is allowed to perform an action. This context can dynamically change the authorization strategy based on the rules.
+
+#### **AuthorizationContext.php** (Core/Authorization/AuthorizationContext.php)
+
+```php
+<?php
+
+namespace App\Core\Authorization;
+
+class AuthorizationContext
+{
+    private $strategy;
+
+    public function __construct(AuthorizationStrategy $strategy)
+    {
+        $this->strategy = $strategy;
+    }
+
+    public function setStrategy(AuthorizationStrategy $strategy)
+    {
+        $this->strategy = $strategy;
+    }
+
+    public function checkAuthorization($user, $resource)
+    {
+        return $this->strategy->authorize($user, $resource);
+    }
+}
+```
+
+The **AuthorizationContext** is used to manage the strategy dynamically, meaning you can change the authorization strategy based on different contexts or actions.
+
+---
+
+### Step 4: Integration with Use Cases or Controllers
+
+In your use cases or controllers, you can now pass the **AuthorizationContext** to check authorization. The advantage of this approach is that you can easily swap out the authorization strategy without modifying the core business logic.
+
+#### Example Use Case: **CreateTask.php** (Core/UseCases/CreateTask.php)
+
+```php
+<?php
+
+namespace App\Core\UseCases;
+
+use App\Core\Authorization\AuthorizationContext;
+use App\Core\Authorization\RoleBasedAuthorization;
+use App\Core\Repositories\TaskRepository;
+use App\Core\Entities\Task;
+
+class CreateTask
+{
+    private $taskRepository;
+    private $authorizationContext;
+
+    public function __construct(TaskRepository $taskRepository, AuthorizationContext $authorizationContext)
+    {
+        $this->taskRepository = $taskRepository;
+        $this->authorizationContext = $authorizationContext;
+    }
+
+    public function execute($user, $title, $description)
+    {
+        // You can dynamically change the strategy based on the context
+        $this->authorizationContext->setStrategy(new RoleBasedAuthorization('admin'));
+
+        if (!$this->authorizationContext->checkAuthorization($user, null)) {
+            throw new \Exception('User is not authorized to create a task.');
+        }
+
+        $task = new Task(null, $title, $description, 'pending');
+        return $this->taskRepository->save($task);
+    }
+}
+```
+
+In the example above, the `CreateTask` use case uses the `AuthorizationContext` to check whether the user has the required role (`admin`) before proceeding with task creation. The strategy can easily be swapped with other strategies (e.g., permission-based authorization).
+
+---
+
+### Step 5: Create Authorization Rules Dynamically
+
+If you need to dynamically add or modify authorization rules (for example, adding a new permission for users), you can simply create a new strategy and inject it into the **AuthorizationContext** without modifying the existing code.
+
+For example, to add a new **permission-based** rule:
+
+```php
+// In your controller or use case
+$this->authorizationContext->setStrategy(new PermissionBasedAuthorization('manage_tasks'));
+
+if (!$this->authorizationContext->checkAuthorization($user, null)) {
+    throw new \Exception('User does not have the required permission.');
+}
+```
+
+### Step 6: Apply the Strategy Pattern in Middleware (Optional)
+
+You can also integrate the Strategy pattern within middleware to abstract authorization checks. For example, if every request requires certain authorization:
+
+#### **AuthorizationMiddleware.php**
+
+```php
+namespace App\Http\Middleware;
+
+use App\Core\Authorization\AuthorizationContext;
+use App\Core\Authorization\RoleBasedAuthorization;
+use Closure;
+use Illuminate\Http\Request;
+
+class AuthorizationMiddleware
+{
+    protected $authorizationContext;
+
+    public function __construct(AuthorizationContext $authorizationContext)
+    {
+        $this->authorizationContext = $authorizationContext;
+    }
+
+    public function handle(Request $request, Closure $next)
+    {
+        $user = $request->user();  // Assuming user is already authenticated
+
+        // Example: Use role-based authorization strategy
+        $this->authorizationContext->setStrategy(new RoleBasedAuthorization('admin'));
+
+        if (!$this->authorizationContext->checkAuthorization($user, null)) {
+            return response()->json(['message' => 'Forbidden'], 403);
+        }
+
+        return $next($request);
+    }
+}
+```
+
+In this middleware, the authorization check happens dynamically, and the strategy used to check authorization can easily be changed as needed.
+
+---
+
+### Benefits of This Approach:
+1. **Open/Closed Principle (OCP)**: You can extend authorization rules without changing existing code (just add new strategies).
+2. **Single Responsibility Principle (SRP)**: Each strategy has a single responsibility—checking one type of authorization.
+3. **Flexible & Maintainable**: Adding new authorization rules or changing existing ones is easy. You don’t need to touch your use cases or controllers.
+4. **Extensibility**: You can easily add new strategies for more complex authorization rules without disrupting existing workflows.
+5. **Decoupled Authorization**: The core application logic is decoupled from how authorization is handled, making it easier to adapt to different systems or change the strategy.
+
+### Conclusion:
+By using the **Strategy Pattern** along with **SOLID principles**, you can manage authorization in a way that avoids hardcoding rules and provides flexibility to change or extend them easily. The **AuthorizationContext** acts as the central place where the authorization strategy is applied, ensuring that you can modify or add authorization rules without affecting the rest of your system.
