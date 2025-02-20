@@ -1,4 +1,4 @@
-Sure! Let's walk through a simple example of implementing **Clean Architecture** in a **Laravel** application. We'll keep things minimal, so you can focus on the core concepts of Clean Architecture while still using Laravel's conventions.
+Let's walk through a simple example of implementing **Clean Architecture** in a **Laravel** application. We'll keep things minimal, so you can focus on the core concepts of Clean Architecture while still using Laravel's conventions.
 
 ### Scenario:
 We'll build a simple **Task Management** system, where users can:
